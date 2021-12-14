@@ -1,0 +1,624 @@
+---
+title: "Boston Housing dataset"
+author: "Pritom"
+date: "12/13/2021"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  dpi = 300
+  # fig.height = 4.5,
+  # fig.width = 8
+)
+
+library(tidyverse)
+library(tidymodels)
+library(pander)
+df <-
+  read_csv("train.csv") %>%
+  janitor::clean_names()
+
+set.seed(123)
+df_split <-
+  df %>%
+  initial_split(prop = .9, strata = sale_price)
+
+df <- training(df_split)
+```
+
+## Dataset
+This data set is from {**Kaggle**}[https://www.kaggle.com/c/house-prices-advanced-regression-techniques/overview]. Basic description of this data set is, it contains total 79 features. Fror which modeling become a cumbersome task.
+
+## Missing values
+```{r}
+df %>% 
+    map_df(~sum(is.na(.x))/nrow(df)) %>% 
+    pivot_longer(everything(), names_to = "variables") %>% 
+    arrange(-value) %>% 
+    mutate(value = round(value * 100, 1)) %>%
+    slice_head(n = 10) %>% 
+    pander()
+```
+So we will eliminate any of the variables for which the missing value percentage is more than 20%. So we are going to eliminate variables
+    
+    - PoolQC 
+    - MiscFeature 
+    - Alley 
+    - Fence 
+    - FireplaceQu
+
+## Selecting only the variables with completation rate more than 80%
+Since it is very risky to retrieve the data when there is more than 20% observations are missing. So we simply ignore the columns.
+
+
+## Categorical variables
+There are 38 total categorical variables. Among which some of them have more than 10 levels. Which may be redundant for the ML models. SO we simply lumn the factors which has unnecessary labels.
+```{r}
+df %>% 
+    select(-c(pool_qc, misc_feature, alley, fence, fireplace_qu)) %>% 
+    select(is.character) %>% 
+    pivot_longer(everything()) %>%
+    distinct() %>% 
+    group_by(name) %>% 
+    summarise(`Number of caterories`=n()) %>% 
+    arrange(-`Number of caterories`)
+```
+
+So variable neighborhood, exterior2nd and exterior1st has extra amount of variables. So we will manually check whether all those laves could be categorise as lower number of categories.
+
+## Barplot for showing the distributions
+```{r}
+df %>% 
+    select(neighborhood, exterior2nd, exterior1st) %>% 
+    pivot_longer(everything()) %>% 
+    count(name, value) %>%
+    mutate(
+        value = tidytext::reorder_within(value, n, name)
+    ) %>% 
+    ggplot(aes(value, n, fill = name)) +
+    geom_col(show.legend = F) +
+    tidytext::scale_x_reordered() +
+    facet_wrap(~name, ncol = 1, scales = "free")
+```
+This Barplot shows that there are many labels that have a significantly lower count and which may introduce "Zero Variance" problem to the variables when we will apply dummy encoding. SO we need to lump those labels together with lower count.
+
+## Boxplot for the effects of each labels.
+```{r}
+df %>% 
+    select(neighborhood, exterior2nd, exterior1st, sale_price) %>% 
+    pivot_longer(-sale_price) %>% 
+    mutate(
+        value = 
+            tidytext::reorder_within(value, by = sale_price, within = name, fun = "median")
+        ) %>% 
+    ggplot(aes(value, sale_price, fill = name)) +
+    geom_boxplot(show.legend = F, outlier.shape = NA) +
+    tidytext::scale_x_reordered() +
+    facet_wrap(~name, ncol = 1, scales = "free") +
+    scale_y_continuous(labels = NULL)
+```
+We can see that there exist different mean levels for those varoables above. SO those variables may be useful for the prediction.
+
+## Barplot for other categorical variables
+```{r}
+df %>% 
+    select(-c(pool_qc, misc_feature, alley, fence, fireplace_qu)) %>% 
+    select(is.character) %>% 
+    select(-c(neighborhood, exterior2nd, exterior1st)) %>% 
+    select(1:16) %>% 
+    pivot_longer(everything()) %>% 
+    count(name, value) %>% 
+    mutate(
+        value = tidytext::reorder_within(value, n, name)
+    ) %>% 
+    ggplot(aes(value, n, fill = name)) +
+    geom_col(show.legend = F) +
+    tidytext::scale_x_reordered() +
+    scale_y_continuous(labels = NULL) +
+    facet_wrap(~name, scales = "free")
+```
+Again we can see that there are different amount of counts for the different labels of the variables.
+
+## Boxplot for those categorical variables
+```{r}
+df %>% 
+    select(-c(pool_qc, misc_feature, alley, fence, fireplace_qu)) %>% 
+    select(is.character, sale_price) %>%
+    select(-c(neighborhood, exterior2nd, exterior1st)) %>% 
+    select(1:16,sale_price) %>%
+    pivot_longer(-sale_price) %>% 
+    mutate(
+        value = 
+            tidytext::reorder_within(value, by = sale_price, within = name, fun = "median")
+        ) %>% 
+    ggplot(aes(value, sale_price, fill = name)) +
+    geom_boxplot(show.legend = F, outlier.shape = NA) +
+    tidytext::scale_x_reordered() +
+    facet_wrap(~name, scales = "free") +
+    scale_y_continuous(labels = NULL)
+```
+And here we can see that many of those varoables can be helpful for the predictive performance. Because there are different mean levels for the different labels for some variables.
+
+## Barplot for other categorical variables
+```{r}
+df %>% 
+    select(-c(pool_qc, misc_feature, alley, fence, fireplace_qu)) %>% 
+    select(is.character) %>% 
+    select(-c(neighborhood, exterior2nd, exterior1st)) %>% 
+    select(17:35) %>% 
+    pivot_longer(everything()) %>% 
+    count(name, value) %>% 
+    mutate(
+        value = tidytext::reorder_within(value, n, name)
+    ) %>% 
+    ggplot(aes(value, n, fill = name)) +
+    geom_col(show.legend = F) +
+    tidytext::scale_x_reordered() +
+    scale_y_continuous(labels = NULL) +
+    facet_wrap(~name, scales = "free")
+```
+we can see that there are different amount of counts for the different labels of the variables. 
+
+## Boxplot for other categorical variables
+```{r}
+df %>%
+    select(-c(pool_qc, misc_feature, alley, fence, fireplace_qu)) %>% 
+    select(is.character, sale_price) %>%
+    select(-c(neighborhood, exterior2nd, exterior1st)) %>% 
+    select(17:36) %>%
+    pivot_longer(-sale_price) %>% 
+    mutate(
+        value = 
+            tidytext::reorder_within(value, by = sale_price, within = name, fun = "median")
+        ) %>% 
+    ggplot(aes(value, sale_price, fill = name)) +
+    geom_boxplot(show.legend = F, outlier.shape = NA) +
+    tidytext::scale_x_reordered() +
+    facet_wrap(~name, scales = "free") +
+    scale_y_continuous(labels = NULL)
+```
+Here we can see that many of those varoables can be helpful for the predictive performance. Because there are different mean levels for the different labels for some variables.
+
+## Scatter plot for the numeric variables
+```{r}
+df %>% 
+    select(-c(pool_qc, misc_feature, alley, fence, fireplace_qu)) %>% 
+    select(sale_price,is.numeric, -id) %>%
+    pivot_longer(-sale_price) %>% 
+    nest(-name) %>% 
+    mutate(id = row_number(),
+           id = (id-1)%/%6) %>% 
+    unnest() %>% 
+    group_by(name) %>% 
+    mutate(value = (value - min(value, na.rm = T))/max(value, na.rm = T)) %>% 
+    ggplot(aes(value, sale_price, col = name)) +
+    geom_jitter(alpha = .02,show.legend = F) +
+    geom_smooth(method = "lm", se = F,show.legend = F) +
+    facet_wrap(~id, scales = "free")
+```
+Here we can see that different numerical variable showes a strong linear association with the predictor variables.
+
+## Correlation among the numeric variables
+```{r}
+df %>% 
+    select(-c(pool_qc, misc_feature, alley, fence, fireplace_qu)) %>% 
+    select(is.numeric, -id) %>% 
+    cor() %>% 
+    as.data.frame() %>% 
+    rownames_to_column() %>% 
+    pivot_longer(-rowname) %>% 
+    arrange(-abs(value)) %>% 
+    mutate(value = round(value,2)) %>% 
+    filter(rowname != name) %>% 
+    filter(1:1332%%2 == 1) %>% 
+    slice_head(n = 10)
+
+# df <- 
+#   df %>% 
+#   mutate_if(is.character,as.factor)
+```
+There are many correlated terms. So we might eliminate some of the correlated variables.
+
+# Modeling
+
+## Defining the models
+We will use tidymodel framework in R. This is the most recent TidyWorkflow by the Rstudio community. To use that framework we need to define the models first.
+```{r}
+models <- list()
+models$lr_specs <-
+    linear_reg(mode = "regression",penalty = tune(),mixture = tune()) %>%
+    set_engine("glmnet")
+
+models$spline_specs <-
+    mars(
+        mode = "regression",
+        num_terms = tune(),
+        prod_degree = tune(),
+        prune_method = tune()
+    ) %>%
+    set_engine("earth")
+
+models$rf_specs <-
+    rand_forest(
+        mode = "regression",
+        trees = 1000,
+        min_n = tune()
+    ) %>%
+    set_engine("randomForest")
+
+models$bt_specs <-
+    boost_tree(
+        mode = "regression",
+        trees = 1000,
+        min_n = tune(),
+        tree_depth = tune(),
+        learn_rate = tune()
+    ) %>%
+    set_engine("xgboost")
+```
+
+## Cross validation and recipe
+To make data pre-processing easy, we will use the recipe package and to train the hyperparameters we will use the rsample package. We will use 6 fold cross validation for this.
+```{r}
+df_recipe <- 
+    df %>% 
+    recipe(formula = sale_price ~ .) %>% 
+    update_role(id,new_role = "id") %>% 
+    step_select(-c(pool_qc, misc_feature, alley, fence, fireplace_qu)) %>% 
+    step_impute_median(all_numeric(),-all_outcomes()) %>% 
+    step_impute_mode(all_nominal()) %>% 
+    step_other(all_nominal()) %>% 
+    step_normalize(all_numeric(),-all_outcomes(),-has_role("id")) %>% 
+    step_zv(all_predictors()) %>% 
+    step_dummy(all_nominal()) %>% 
+    step_nzv(all_predictors()) %>% 
+    prep()
+
+set.seed(123)
+df_cv <-
+    df_recipe %>% 
+    juice() %>% 
+    vfold_cv(6, strata = sale_price)
+```
+
+## Function for model fitting
+Defining a function for the modelling, which will automatically find out the best hyperparameters settings and fit the model.
+```{r}
+model_fit <-
+  function(x) {
+    set.seed(123)
+    
+    if (nrow(parameters(x)) != 0) {
+      vlu_fw <-
+        workflow() %>%
+        add_model(x) %>%
+        add_formula(formula(df_recipe))
+      
+      
+      print("hyperParameter Training")
+      x <-
+        vlu_fw %>%
+        tune_grid(
+          resamples = df_cv,
+          grid = grid_latin_hypercube(parameters(x), size = 25),
+          metrics = metric_set(rmse)
+        )
+      print("Model Training")
+      x <-
+        vlu_fw %>%
+        finalize_workflow(select_best(x)) %>%
+        fit(juice(df_recipe))
+    } else {
+      print("Model Training")
+      x <-
+        workflow() %>%
+        add_model(x) %>%
+        add_formula(formula(df_recipe)) %>%
+        fit(juice(df_recipe))
+    }
+    
+    return(x)
+  }
+```
+
+## Model fitting
+We will fit the model and save that file in an Rds version so that we dont need to run those model again and again.
+```{r}
+fit_models <- list()
+for (i in 1:length(models)) {
+    fit_models[[i]] <- model_fit(models[[i]])
+}
+
+fit_models %>% 
+  write_rds("fitted.Rds")
+
+fit_models <- readRDS("fitted.Rds")
+```
+
+## Predicting the test dataset
+We already train those model on the basis of the train dataset. Now we will evaluate the performance on the test dataset and find out which model is performing best for this dataset,
+```{r}
+x <- 
+tibble(model = names(models), fit_models) %>%
+    mutate(
+        tibble = map(fit_models, 
+                     ~ predict(.x, bake( df_recipe, testing(df_split) ))),
+        test = list(
+            testing(df_split) %>% 
+                bake(object = df_recipe) %>% 
+                pull(sale_price)
+                        )
+        ) %>% 
+    select(-fit_models) %>% 
+    unnest()
+```
+
+## Predicted value vs estimated values
+```{r}
+x %>% 
+  ggplot(aes(test,.pred, col = model)) +
+  geom_point() +
+  geom_abline() +
+  geom_smooth(se = F) +
+  coord_fixed()
+```
+This graph can be explained as the closer the point lie on the diaonal line the better the prediction is. We can see that there is a tendency to underestimate the price of the house where the price is bit higher. SO none of those models are performing well. We may need to try some other approach.
+
+## Mean absolute error
+```{r}
+x %>% 
+    group_by(model) %>% 
+    mae(test, .pred) %>% 
+    arrange(.estimate) 
+```
+One of the metric for the evaluation of the regression prediction is "MAE". On that index the models svm, logistic regression and random forest provide almost equal performance. So we will choose any of those 3 as our final model. 
+
+## Root mean square error
+```{r}
+x %>% 
+    group_by(model) %>% 
+    rmse(test, .pred) %>% 
+    arrange(.estimate) 
+```
+RMSE is an another matric for the exaluation of the regression performance. From here we can choose Ranndomforest for our desirable model since it has the highest accuracy.
+
+## Working with the kaggle test data
+This dataset is provided by kaggle for the submission purpose to see the overall ranking compare to the other users world wide. So my estimate from this model gives me a rank of 4000+
+```{r}
+x <- 
+  read_csv("test.csv") %>% 
+  janitor::clean_names() %>% 
+  mutate(sale_price = 1)
+
+bake(object = df_recipe, new_data = x) %>% 
+  augment(x = fit_models[[2]]) %>% 
+  select(id, SalePrice = .pred) %>% 
+  write_csv("first Kaggel sub.csv")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Trying a different approach
+
+## Storing the original data 
+```{r}
+df_original <- df
+```
+
+## Motivation for new approach
+```{r}
+df %>% 
+    select(neighborhood, exterior2nd, exterior1st, sale_price) %>% 
+    pivot_longer(-sale_price) %>% 
+    mutate(
+        value = 
+            tidytext::reorder_within(value, by = sale_price, within = name, fun = "median")
+        ) %>% 
+    ggplot(aes(value, fill = name)) +
+    geom_bar(show.legend = F, outlier.shape = NA) +
+    tidytext::scale_x_reordered() +
+    facet_wrap(~name, ncol = 1, scales = "free") +
+    scale_y_continuous(labels = NULL)
+```
+At the first look this graph may seems messy. But this can me interpreted like at the far left there the levels with the least median level of sales price. So we will perform the lumping process so that the similar categories that have a queal median level lump together..
+
+
+## Defining the function for lumping
+```{r}
+fn_cat <-
+    function(df, x, y, k = 8, p = 6) {
+        df <- 
+            df %>%
+            select(x = .data[[x]], y = .data[[y]]) %>%
+            group_by(x) %>%
+            summarise(med = median(y), n = n()) %>%
+            arrange(med) %>%
+            mutate(
+                med = med / sum(med),
+                med = cumsum(med),
+                new = cut(med, k, paste0("frac", 1:k))
+            ) %>%
+            nest(-new) %>%
+            mutate(
+                frac = map(data,  ~ .x$x),
+                n = map_dbl(data, ~ sum(.x$n)),
+                n = cumsum(n) / sum(n),
+                new1 = cut(n, p, paste0("frac", 1:p))
+            ) %>%
+            select(frac, new = new1) %>%
+            unnest()
+        names(df) <- c(x,paste0(x,"_edt"))
+        df
+    }
+
+fn_cat(df, x = "exterior2nd", y = "sale_price") 
+```
+
+## Changing the levels of each variables.
+```{r}
+for(i in names(select(df, is.character))) {
+  if (pull(df, i) %>% n_distinct() > 6) {
+    xx <- fn_cat(df, x = i, y = "sale_price")
+    
+    df <- left_join(df, xx) %>%
+      select(-i)
+  }
+}
+```
+
+
+
+## Cross validation and recipe
+```{r}
+df_recipe <- 
+    df %>% 
+    recipe(formula = sale_price ~ .) %>% 
+    update_role(id,new_role = "id") %>% 
+    step_select(-c(pool_qc,misc_feature, alley, fence, fireplace_qu)) %>% 
+    # step_select(-c(neighborhood_edt, exterior2nd_edt, exterior1st_edt)) %>% 
+    step_impute_median(all_numeric(),-all_outcomes()) %>% 
+    step_impute_mode(all_nominal()) %>% 
+    step_other(all_nominal()) %>% 
+    step_normalize(all_numeric(),-all_outcomes(),-has_role("id")) %>% 
+    step_zv(all_predictors()) %>% 
+    step_dummy(all_nominal()) %>% 
+    step_nzv(all_predictors()) %>% 
+    prep()
+
+set.seed(123)
+df_cv <-
+    df_recipe %>% 
+    juice() %>% 
+    vfold_cv(6)
+```
+
+## Model fitting
+```{r}
+fit_models_frac <- list()
+for (i in 1:length(models)) {
+    fit_models_frac[[i]] <- model_fit(models[[i]])
+}
+
+fit_models_frac %>%
+  write_rds("fitted_frac.Rds")
+
+fit_models_frac <- readRDS("fitted_frac.Rds")
+```
+
+## Predicting the test dataset
+```{r}
+df_test <-  testing(df_split)
+for(i in names(select(df_original, is.character))) {
+  if (pull(df_original, i) %>% n_distinct() > 6) {
+    xx <- fn_cat(df_original, x = i, y = "sale_price")
+    
+    df_test <- left_join(df_test, xx) %>%
+      select(-i)
+  }
+}
+```
+
+
+```{r}
+x <- 
+tibble(model = names(models), fit_models_frac) %>%
+    mutate(
+        tibble = map(fit_models_frac, 
+                     ~ predict(.x, bake( df_recipe, df_test ))),
+        test = list(tibble(test =df_test$sale_price))
+        ) %>%
+    select(-fit_models_frac) %>% 
+    unnest()
+```
+
+
+```{r}
+x %>% 
+  ggplot(aes(test,.pred, col = model)) +
+  geom_point() +
+  geom_abline() +
+  geom_smooth(se = F) +
+  coord_fixed()
+```
+We can see that there is a tendency to underestimate the price of the house where the price is bit higher. 
+
+## MAE
+```{r}
+x %>% 
+    group_by(model) %>% 
+    mae(test, .pred) %>% 
+    arrange(.estimate) 
+```
+So the models xgBoost provide almost good performance. So we will choose xgBoost as our final model. 
+
+## RMSE
+```{r}
+x %>% 
+    group_by(model) %>% 
+    rmse(test, .pred) %>% 
+    arrange(.estimate) 
+```
+Here we can see some anomaly. In this metric Randomforest however perform better that the bppteted trees. But some how the previous metric looks more convenient. So we will go eith the xgboost model.
+
+## Working with the kaggle test data
+My final estimate from this model gives me a rank of 2142. Which is a great jump. But still there are much room for the improvement. Carefully feature extraction will provibe more better prediction performance.
+```{r}
+x <- 
+  read_csv("test.csv") %>% 
+  janitor::clean_names() %>% 
+  mutate(sale_price = 1)
+
+for(i in names(select(df_original, is.character))) {
+  if (pull(df_original, i) %>% n_distinct() > 6) {
+    xx <- fn_cat(df_original, x = i, y = "sale_price")
+    
+    x <- left_join(x, xx) %>%
+      select(-i)
+  }
+}
+
+bake(object = df_recipe, new_data = x) %>% 
+  augment(x = fit_models_frac[[4]]) %>% 
+  select(id, SalePrice = .pred) %>% 
+  write_csv("first Kaggel sub.csv")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
